@@ -1,0 +1,305 @@
+﻿@using RegistrationRules.Models;
+@model RoleCollectionRecord
+@{
+    Script.Require("jQuery").AtHead();
+    Script.Require("kendo.web").AtHead();
+    Style.Require("kendo.web.default");
+}
+
+<div id="WindowStatus" class="table-status">
+    <div class="content"></div>
+</div>
+
+<fieldset>
+    <div class="manage">
+        @Html.ActionLink("Manage Roles", "index", "admin", new { Area = "Orchard.Roles" }, new { Class="button primaryAction" })
+    </div>
+</fieldset>
+
+<div id="RoleGrid" class="collection-table"></div>
+
+@using (Script.Foot())
+{
+    var antiforgeryToken = Html.AntiForgeryTokenValueOrchard();
+    var readCollectionRoute = Url.Action("ListCollection");
+    var readRulesRoute = Url.Action("ListRules");
+    var updateRulesRoute = Url.Action("UpdateRule");
+    var destroyRuleRoute = Url.Action("DestroyRule");
+    var createRuleRoute = Url.Action("CreateRule");
+    var processRuleRoute = Url.Action("Process");
+    var processAllRoute = Url.Action("ProcessAll");
+    
+    <script type="text/javascript">
+        function statusWindow() {
+            var element = $('#WindowStatus');
+            var create = function ($element) {
+                return $element.kendoWindow({
+                    actions: ["Close"],
+                    title: "Process Status",
+                    width: "400px",
+                    draggable: false,
+                    resizable: false,
+                    visible: false
+                }).data("kendoWindow");
+            };
+
+            if (!$.hasData(element)){// !.data("kendoWindow")) {
+                create(element);
+            }
+
+            var a = {
+                window : element.data("kendoWindow"),
+            };
+
+            a.open = function(){ a.window.center(); a.window.open(); };
+            a.close = function() { a.window.close(); }
+
+            return a;
+        }
+        
+        $(function () {
+            var window = statusWindow();
+        })
+    </script>
+    <script type="text/javascript">
+        $(function () {
+            var loadChild = function (e) {
+                var modelDefinition = function (roleId) {
+                    var a = kendo.data.Model.define({
+                        id: "Id",
+                        fields: {
+                            Id: { editable: false, nullable: true },
+                            RuleName: { validation: { required: true} },
+                            Operator: { validation: { required: true} },
+                            RuleAction: { validation: { required: true} },
+                            InculusionRule: { type: "boolean", defaultValue: true },
+                            CheckUserOnRegistration: { type: "boolean", defaultValue: true },
+                            RoleId: { type: "number", editable: false, defaultValue: roleId }
+                        }
+                    });
+
+                    return a;
+                };
+                var requestTransportData = function () {
+                    var a = {
+                        __RequestVerificationToken: '@antiforgeryToken'
+                    }
+                    return a;
+                };
+                var roleDataSource = function (roleId) {
+                    var a = new kendo.data.DataSource({
+                        type: "json",
+                        transport: {
+                            read: {
+                                url: "@readRulesRoute" + "?roleId=" + roleId,
+                                dataType: "json",
+                                data: requestTransportData()
+                            },
+                            update: {
+                                url: "@updateRulesRoute",
+                                dataType: "json",
+                                type: "POST",
+                                success: function () { alert("done"); },
+                                data: requestTransportData()
+                            },
+                            destroy: {
+                                url: "@destroyRuleRoute",
+                                dataType: "json",
+                                type: "POST",
+                                data: requestTransportData()
+                            },
+                            create: {
+                                url: "@createRuleRoute",
+                                dataType: "json",
+                                type: "POST",
+                                data: requestTransportData()
+                            }
+                        },
+                        schema: {
+                            model: modelDefinition(roleId)
+                        },
+                        requestStart: function (e) {
+
+                        },
+                        change: function (data) {
+                            if (data.action) {
+                                return;
+                            }
+                            if (data.sender) {
+                                var view = a.view();
+                                var dirtyItems = $.grep(view, function (e) {
+                                    return e.dirty === false && !e.Id;
+                                });
+                                if (dirtyItems.length > 0) {
+                                    a.read();
+                                }
+                            }
+                        },
+                        error: function (xhr, error) {
+
+                        },
+                        pageSize: 5
+                        //autoSync: true
+                    });
+
+                    return a;
+                };
+
+                var operatorEditor = function (container, options) {
+                    var data = [
+                        { text: "Equals" },
+                        { text: "Begins with" },
+                        { text: "Ends with" },
+                        { text: "Contains" }
+                    ];
+                    $('<input data-text-field="text" data-value-field="text" data-bind="value:' + options.field + '"/>')
+                        .appendTo(container)
+                        .kendoDropDownList({
+                            dataTextField: "text",
+                            dataValueField: "text",
+                            autoBind: false,
+                            dataSource: data
+                        });
+                };
+
+                var element = "<div id='{0}' class='roleTable' />";
+                var id = "role-table-" + e.data.Id;
+                var $kgrid = $(element.replace("{0}", id)).appendTo(e.detailCell).kendoGrid({
+                    dataSource: roleDataSource(e.data.Id),
+                    scrollable: false,
+                    sortable: true,
+                    pageable: true,
+                    editable: "inline",
+                    height: 300,
+                    toolbar: ["create"],
+
+                    columns: [
+                        { field: "RuleName" },
+                        { field: "Operator", editor: operatorEditor },
+                        { field: "RuleAction" },
+                        { field: "InculusionRule", title: "Include Rule", width: 90  },
+                        { field: "CheckUserOnRegistration", title: "On Register", width: 90 },
+                        { command: ["edit", "destroy", { text: "Process", className: "process-button"}], title: "&nbsp;", width: "210px" }
+                    ]
+                }).data("kendoGrid");
+
+                $("#" + id).delegate(".process-button", "click", function (ev) {
+                    e.preventDefault();
+
+                    var dataItem = $kgrid.dataItem($(this).closest("tr"));
+                    var route = +'?Id=' + dataItem.Id;
+                    var processedTemplate = kendo.template($("#WindowTemplate").html());
+
+                    $.ajax({
+                        url: '@processRuleRoute',
+                        data: $.extend(requestTransportData(), { id: dataItem.Id }),
+                        cache: false,
+                        dataType: 'json',
+                        type: 'POST',
+                        success: function (data) {
+                            var o = { data: data };
+
+                            $("#WindowStatus .content").html("");
+
+                            var template = $("<div />").html(processedTemplate(o)).appendTo("#WindowStatus .content");
+                            var panelBar = $("ul.panelBar").kendoPanelBar();
+
+
+                            statusWindow().open();
+                        }
+                    });
+
+                });
+            };
+
+            var element = $("#RoleGrid").kendoGrid({
+                dataSource: {
+                    type: "json",
+                    transport: {
+                        read: '@readCollectionRoute',
+                        scheme: {
+                            id: "Id"
+                        }
+                    }
+                },
+                height: 450,
+                sortable: true,
+                pageable: false,
+                detailInit: loadChild,
+                dataBound: function () { },
+                columns: [
+                    {
+                        field: "RoleName",
+                        title: "Role Name",
+                    },
+                    { command: [ { text: "Process All", className: "process-all-button"}], title: "&nbsp;", width: "210px" }
+                ]
+            });
+
+            $("#RoleGrid").delegate(".process-button", "click", function (ev) {
+                e.preventDefault();
+                var dataItem = $kgrid.dataItem($(this).closest("tr"));
+                var processedTemplate = kendo.template($("#WindowTemplate").html());
+
+                $.ajax({
+                    url: '@processAllRoute',
+                    data: $.extend(requestTransportData(), { id: dataItem.Id }),
+                    cache: false,
+                    dataType: 'json',
+                    type: 'POST',
+                    success: function (data) {
+                        var o = { data: data };
+
+                        $("#WindowStatus .content").html("");
+
+                        $("<div />").html(processedTemplate(o)).appendTo("#WindowStatus .content");
+                        $("ul.panelBar").kendoPanelBar();
+
+                        statusWindow().open();
+                    }
+                });
+
+
+            });
+        });
+        function debugEach(value, index) {
+            var a = 1;
+        }
+    </script>
+    <script id="WindowTemplate" type="text/x-kendo-template">
+    <h2>Users processed</h2>
+    <ul class="panelBar">
+        <li>Added Users
+            <div>
+                <ul class="items">
+                    # if(data.NeededRole.length == 0) { #
+                        <li>No users added</li>  
+                    # }#
+                    # for (var i = 0; i < data.NeededRole.length; i++) { #
+                    # debugEach(data.NeededRole[i]); #
+                        <li>#= data.NeededRole[i].UserName #</li>
+                    # } #
+                </ul>
+            </div> 
+        </li>
+        <li>Current Users
+            <div>
+                <ul class="items">
+                # if(data.WithinRole.length == 0) { #
+                    <li>No users added</li>  
+                # }#
+                # for (var i = 0; i < data.WithinRole.length; i++) { #
+                # debugEach(data.WithinRole[i]); #
+                    <li>#= data.WithinRole[i].UserName #</li>
+                # } #
+                </ul>
+            </div>
+        </li>
+
+    </ul>
+    
+    
+    
+    </script>
+    
+}
